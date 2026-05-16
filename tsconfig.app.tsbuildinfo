@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/features/dashboard/kpicard.tsx","./src/features/dashboard/sidebar.tsx","./src/features/dashboard/fixtures.ts","./src/features/dashboard/index.ts","./src/features/dashboard/page.tsx","./src/features/dashboard/smoke.ts","./src/features/dashboard/types.ts"],"version":"5.9.3"}
