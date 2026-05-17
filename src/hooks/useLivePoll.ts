@@ -4,8 +4,9 @@ import type { FieldUpdate, SourceFixture } from "../lib/pipeline/types";
 import { detect } from "../lib/pipeline/detect";
 import { extract } from "../lib/pipeline/extract";
 import { applyUpdates } from "../lib/pipeline/apply";
+import { api } from "../lib/api";
 
-const POLL_INTERVAL = 30; // seconds between each source-site check
+const POLL_INTERVAL = 30; // seconds
 
 interface LivePollResult {
   secondsUntilNext: number;
@@ -15,23 +16,19 @@ interface LivePollResult {
 export function useLivePoll(
   liveListings: Listing[],
   onUpdate: (updated: Listing[]) => void,
-  onFieldUpdates?: (byListing: Record<string, FieldUpdate[]>) => void
+  onFieldUpdates?: (byListing: Record<string, FieldUpdate[]>) => void,
 ): LivePollResult {
   const [secondsUntilNext, setSecondsUntilNext] = useState(POLL_INTERVAL);
   const etagRef = useRef<string | null>(null);
-  // Refs instead of deps so the poll closure always reads the latest values
-  // without being recreated — recreation would restart the interval and reset the countdown
   const listingsRef = useRef<Listing[]>(liveListings);
   listingsRef.current = liveListings;
   const onFieldUpdatesRef = useRef(onFieldUpdates);
   onFieldUpdatesRef.current = onFieldUpdates;
 
   const poll = useCallback(async () => {
-    // Only one listing is marked live (the demo source site)
     const listing = listingsRef.current.find((l) => l.live);
     if (!listing) return;
 
-    // Conditional GET: server returns 304 if ETag hasn't changed, saving a full parse
     const headers: Record<string, string> = {};
     if (etagRef.current) headers["If-None-Match"] = etagRef.current;
 
@@ -39,16 +36,15 @@ export function useLivePoll(
     try {
       res = await fetch(listing.website + "/business.json", { headers });
     } catch {
-      return; // network failure — skip this tick, try again next interval
+      return;
     }
 
-    if (res.status === 304) return; // source unchanged
+    if (res.status === 304) return;
     if (!res.ok) return;
 
     const newEtag = res.headers.get("ETag") ?? "";
-    const data = await res.json() as Record<string, string>;
+    const data = (await res.json()) as Record<string, string>;
 
-    // Wrap the raw JSON into the HTML fixture format that extract() expects
     const fixture: SourceFixture = {
       listingId: listing.id,
       sitemap_lastmod_changed: false,
@@ -67,17 +63,21 @@ export function useLivePoll(
     const { updates } = extract(listing, fixture);
     if (updates.length === 0) return;
 
+    // Apply changes locally for instant UI feedback
     const updated = applyUpdates(listing, updates);
     onUpdate(listingsRef.current.map((l) => (l.id === updated.id ? updated : l)));
-    // Also push the FieldUpdate objects so the modal's DiffPanel can show confidence scores
     onFieldUpdatesRef.current?.({ [listing.id]: updates });
+
+    // Also trigger a backend batch for phases that re-extract + hash the changed record
+    void api.postBatch([3, 6]).catch(() => {
+      // Backend unavailable — local update already applied above, nothing more to do
+    });
   }, [onUpdate]);
 
   useEffect(() => {
     void poll();
-
     setSecondsUntilNext(POLL_INTERVAL);
-    const countdownId = setInterval(() => {
+    const id = setInterval(() => {
       setSecondsUntilNext((s) => {
         if (s <= 1) {
           void poll();
@@ -86,8 +86,7 @@ export function useLivePoll(
         return s - 1;
       });
     }, 1000);
-
-    return () => clearInterval(countdownId);
+    return () => clearInterval(id);
   }, [poll]);
 
   return { secondsUntilNext, lastEtag: etagRef.current };

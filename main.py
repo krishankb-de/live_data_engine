@@ -21,6 +21,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / ".env")
+except ImportError:
+    pass  # dotenv optional; env vars can be exported externally
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -90,7 +96,12 @@ def print_test_summary(results: list) -> None:
         print(f"  Phone    : {r.get('phone') or '—'}")
         hours = r.get("opening_hours")
         print(f"  Hours    : {json.dumps(hours, ensure_ascii=False) if hours else '—'}")
-        print(f"  Status   : {r.get('extraction_status')}  (sources: {r.get('data_sources')})")
+        fs = r.get("field_sources") or {}
+        per_field = " ".join(
+            f"{k}={fs.get(k, 'miss')}" for k in ("name", "address", "phone", "opening_hours")
+        )
+        print(f"  Status   : {r.get('extraction_status')}  ({per_field})")
+        print(f"  Trace    : {r.get('data_sources')}")
     print("=" * 80)
     complete = sum(1 for r in results if r.get("extraction_status") == "complete")
     partial  = sum(1 for r in results if r.get("extraction_status") == "partial")

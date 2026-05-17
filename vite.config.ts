@@ -10,6 +10,7 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  // @ts-ignore vitest extends vite config with `test` at runtime
   test: {
     environment: "jsdom",
     globals: true,

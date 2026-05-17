@@ -179,7 +179,7 @@ class TestFixture:
             "http://www.antiquariat-in-berlin.de":
                 "b2b1723bff586b19afd4937700465db8f57f186aa8da167f0c26e24ded4c5198",
             "https://www.buchhandlung-walther-koenig.de/":
-                "a2bf9ebf4ee5e68aec46ed3c4406b1da6bfa1cecbaa1859f2e0dc95092eb4bd3",
+                "cac1ff29bfb6a092a1d00f730042ec4dcc5a18d1671ba60b59188232997ae328",
         }
         records = json.loads(FIXTURE.read_text())
         by_url = {r.get("website_url"): r for r in records}

@@ -1,2 +1,12 @@
 scrapling[fetchers]
 pytest
+openai
+python-dotenv
+supabase
+httpx
+tenacity
+lxml
+fastapi
+uvicorn[standard]
+PyJWT
+celery[redis]

@@ -1,4 +1,6 @@
-export function StatusPill({ status }: { status: "auto_applied" | "needs_review" | "source_offline" | null }) {
+import type { FieldUpdateStatus } from "../models/types";
+
+export function StatusPill({ status }: { status: FieldUpdateStatus | null }) {
   if (status === null) {
     return <span className="text-text-muted text-xs">—</span>;
   }
