@@ -17,10 +17,92 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re as _re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+
+_LISTING_RE = _re.compile(r"^/listing/(jsonld|regex|brain|llm)/(\d+)$")
+
+
+def _generate_listing_html(kind: str, n: int) -> str:
+    """Generate unique deterministic HTML per (kind, n) for 300-listing tests."""
+    if kind == "jsonld":
+        phone = f"+49 30 {100000 + n}"
+        street = f"Hauptstraße {n % 200 + 1}"
+        postal = f"{10000 + n % 900}"
+        opens = f"{8 + n % 3:02d}:00"
+        closes = f"{17 + n % 3:02d}:00"
+        name = f"Testfirma {n} Berlin"
+        return f"""<!doctype html>
+<html lang="de"><head><meta charset="utf-8"/><title>{name}</title>
+<script type="application/ld+json">
+{{
+  "@context":"https://schema.org","@type":"LocalBusiness",
+  "name":"{name}","telephone":"{phone}",
+  "address":{{"@type":"PostalAddress","streetAddress":"{street}",
+    "addressLocality":"Berlin","postalCode":"{postal}","addressCountry":"DE"}},
+  "openingHoursSpecification":[{{"@type":"OpeningHoursSpecification",
+    "dayOfWeek":["Monday","Tuesday","Wednesday","Thursday","Friday"],
+    "opens":"{opens}","closes":"{closes}"}}]
+}}
+</script></head>
+<body><h1>{name}</h1>
+<p>Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler.</p>
+<footer><p>© {name}. Impressum. Alle Rechte vorbehalten.</p></footer>
+</body></html>"""
+
+    if kind == "regex":
+        phone = f"+49 30 {200000 + n}"
+        street = f"Berliner Straße {n % 200 + 1}"
+        postal = f"{10000 + n % 900}"
+        name = f"Regex Firma {n} Berlin"
+        return f"""<!doctype html>
+<html lang="de"><head><meta charset="utf-8"/><title>{name}</title></head>
+<body><h1>{name}</h1>
+<div class="impressum">
+  <p>{name} GbR<br/>{street}<br/>{postal} Berlin</p>
+  <p>Telefon: {phone}</p>
+  <p>Öffnungszeiten: Mo-Fr 09:00-18:00</p>
+</div>
+<p>Wir bieten Dienstleistungen in Berlin an. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler.</p>
+<footer><p>© {name}. Impressum. Alle Rechte vorbehalten.</p></footer>
+</body></html>"""
+
+    if kind == "brain":
+        phone = f"+49 30 {300000 + n}"
+        street = f"Testweg {n % 100 + 1}"
+        postal = f"1{n % 9000 + 1000}"
+        name = f"Brain Firma {n}"
+        return f"""<!doctype html>
+<html lang="de"><head><meta charset="utf-8"/><title>{name}</title></head>
+<body><h1>{name}</h1>
+<div class="contact-block">
+  <span class="tel" data-value="{phone}">{phone}</span>
+  <div class="addr">{street}, {postal} Berlin</div>
+  <div class="hrs">Mo-Fr 10:00-17:00</div>
+</div>
+<p>Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler.</p>
+<footer><p>Impressum. Alle Rechte vorbehalten.</p></footer>
+</body></html>"""
+
+    # kind == "llm" — obfuscated data elements that bypass standard regex
+    phone = f"+49 30 {400000 + n}"
+    street = f"Serviceweg {n % 100 + 1}"
+    postal = f"1{n % 9000 + 1000}"
+    name = f"LLM Service {n}"
+    return f"""<!doctype html>
+<html lang="de"><head><meta charset="utf-8"/><title>{name}</title></head>
+<body><h1>{name}</h1>
+<section id="info">
+  <data class="p" value="{phone}">Kontakt</data>
+  <data class="a">{street}, {postal} Berlin</data>
+  <data class="h">Mo bis Fr, neun bis achtzehn Uhr</data>
+</section>
+<p>Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler.</p>
+<footer><p>Impressum.</p></footer>
+</body></html>"""
 
 import pytest
 
@@ -59,9 +141,17 @@ class _ServerState:
         self._phone_override = None
 
     def get_html(self) -> str:
+        import re as _re
         with self.lock:
             html = self._base_html
             phone_part = f" {self._phone_override}" if self._phone_override else ""
+            # Patch JSON-LD telephone field so Tier-1 extraction sees the override.
+            if self._phone_override:
+                html = _re.sub(
+                    r'"telephone"\s*:\s*"[^"]*"',
+                    f'"telephone": "{self._phone_override}"',
+                    html,
+                )
             # Always inject a <footer> so looks_legit passes and content_hash
             # reflects both which fixture is active and the current phone value.
             html += (
@@ -108,9 +198,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(200, "application/json", json.dumps({"fixture": name}))
             return
 
-        # /
-        if parsed.path == "/":
-            html = _state.get_html()
+        # /listing/{jsonld|regex|brain|llm}/{n}  — dynamic per-listing HTML
+        m = _LISTING_RE.match(parsed.path)
+        if m:
+            html = _generate_listing_html(m.group(1), int(m.group(2)))
             etag = _etag(html)
             if self.headers.get("If-None-Match") == etag:
                 self.send_response(304)
@@ -120,8 +211,17 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(200, "text/html", html, {"ETag": etag})
             return
 
-        self.send_response(404)
-        self.end_headers()
+        # Any path that isn't a control endpoint serves the main page HTML.
+        # This allows SITE_URL = f"{MOCK_SITE_URL}/site" to behave like a real
+        # multi-page site where every URL resolves to the same mock content.
+        html = _state.get_html()
+        etag = _etag(html)
+        if self.headers.get("If-None-Match") == etag:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.end_headers()
+            return
+        self._send(200, "text/html", html, {"ETag": etag})
 
     # ----------------------------------------------------------------- POST --
 

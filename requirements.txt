@@ -1,5 +1,7 @@
 scrapling[fetchers]
 pytest
+playwright
+pytest-playwright
 openai
 python-dotenv
 supabase
