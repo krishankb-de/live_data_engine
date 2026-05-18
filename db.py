@@ -77,9 +77,11 @@ CREATE TABLE IF NOT EXISTS field_observations (
     source_url            TEXT,
     source_page           TEXT,
     extraction_confidence REAL,
+    pattern_id            INTEGER REFERENCES global_patterns(id),
     observed_at           TEXT DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_obs_listing_field ON field_observations (listing_id, field, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_obs_pattern       ON field_observations (pattern_id);
 
 CREATE TABLE IF NOT EXISTS versions (
     id                INTEGER PRIMARY KEY,
@@ -126,15 +128,81 @@ CREATE TABLE IF NOT EXISTS cost_log (
 );
 
 
-create table if not exists regexes (
-    id              integer primary key,
-    address_pattern         text not null,
-    hours_pattern             text not null,
-    jsonold_pattern            text not null,
-    name_pattern               text not null,
-    phone_pattern              text not null,
-    description     text,
-    created_at      text default (datetime('now'))
+CREATE TABLE IF NOT EXISTS regexes (
+    id              INTEGER PRIMARY KEY,
+    address_pattern TEXT NOT NULL,
+    hours_pattern   TEXT NOT NULL,
+    jsonold_pattern TEXT NOT NULL,
+    name_pattern    TEXT NOT NULL,
+    phone_pattern   TEXT NOT NULL,
+    description     TEXT,
+    created_at      TEXT DEFAULT (datetime('now'))
+);
+
+-- ---------------------------------------------------------------------------
+-- Self-learning brain (Phase 2). See plan: read-the-compelte-codebase-abstract-haven.md
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS global_patterns (
+    id                INTEGER PRIMARY KEY,
+    field             TEXT NOT NULL,                  -- 'phone' | 'address' | 'opening_hours' | 'name'
+    pattern_type      TEXT NOT NULL,                  -- 'regex' | 'css'
+    pattern           TEXT NOT NULL,
+    language          TEXT NOT NULL DEFAULT 'any',    -- 'de' | 'en' | 'fr' | 'any'
+    confidence_score  REAL NOT NULL DEFAULT 0.5,
+    success_count     INTEGER NOT NULL DEFAULT 0,
+    failure_count     INTEGER NOT NULL DEFAULT 0,
+    status            TEXT NOT NULL DEFAULT 'trial',  -- 'trial' | 'active' | 'stale' | 'disabled'
+    origin_domain     TEXT,
+    parent_recipe_id  INTEGER REFERENCES recipes(id),
+    rationale         TEXT,
+    created_at        TEXT DEFAULT (datetime('now')),
+    last_used_at      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_patterns_field_status ON global_patterns (field, status, confidence_score DESC);
+CREATE INDEX IF NOT EXISTS idx_patterns_language     ON global_patterns (language);
+
+CREATE TABLE IF NOT EXISTS sandbox_fixtures (
+    id              INTEGER PRIMARY KEY,
+    source_url      TEXT NOT NULL,
+    html_path       TEXT NOT NULL,                    -- relative to output/html_cache/
+    field           TEXT NOT NULL,
+    expected_value  TEXT,                             -- NULL = negative fixture (field absent)
+    language        TEXT NOT NULL DEFAULT 'any',
+    captured_at     TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_fixtures_field_lang ON sandbox_fixtures (field, language);
+
+CREATE TABLE IF NOT EXISTS pattern_executions (
+    id                INTEGER PRIMARY KEY,
+    pattern_id        INTEGER NOT NULL REFERENCES global_patterns(id),
+    listing_id        INTEGER REFERENCES listings(id),
+    batch_id          INTEGER REFERENCES batches(id),
+    outcome           TEXT NOT NULL,                  -- 'hit' | 'miss' | 'invalid'
+    extracted_value   TEXT,
+    validator_passed  INTEGER,                        -- nullable boolean
+    failing_snippet   TEXT,                           -- captured on invalid outcomes for repair
+    ts                TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_exec_pattern_ts ON pattern_executions (pattern_id, ts DESC);
+
+CREATE TABLE IF NOT EXISTS candidate_queue (
+    id                  INTEGER PRIMARY KEY,
+    parent_recipe_id    INTEGER REFERENCES recipes(id),
+    parent_pattern_id   INTEGER REFERENCES global_patterns(id),     -- set for repair candidates
+    field               TEXT NOT NULL,
+    pattern_type        TEXT NOT NULL,                              -- 'regex' | 'css'
+    candidate_pattern   TEXT NOT NULL,
+    language            TEXT NOT NULL DEFAULT 'any',
+    status              TEXT NOT NULL DEFAULT 'queued',             -- 'queued' | 'validating' | 'promoted' | 'rejected'
+    sandbox_precision   REAL,
+    sandbox_recall      REAL,
+    sandbox_details     TEXT,                                       -- JSON: sample_failures, counts
+    llm_cost_eur        REAL DEFAULT 0,
+    rationale           TEXT,
+    ts                  TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_candidates_status ON candidate_queue (status, ts);
 """
 
 # WAL = single-writer + many-reader concurrency (needed for batch + UI activity feed).
@@ -155,6 +223,13 @@ async def init_db() -> None:
     async with aiosqlite.connect(settings.db_path, timeout=15) as conn:
         await conn.executescript(PRAGMAS_SQL)
         await conn.executescript(SCHEMA_SQL)
+        # Brain migration: add pattern_id to pre-existing field_observations tables.
+        async with conn.execute("PRAGMA table_info(field_observations)") as cur:
+            cols = {row[1] async for row in cur}
+        if "pattern_id" not in cols:
+            await conn.execute(
+                "ALTER TABLE field_observations ADD COLUMN pattern_id INTEGER REFERENCES global_patterns(id)"
+            )
         await conn.commit()
 
 

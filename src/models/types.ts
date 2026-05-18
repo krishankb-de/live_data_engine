@@ -18,6 +18,8 @@ export interface Listing {
   changedFields: MonitoredField[];
   emailSent: boolean;
   live?: boolean;
+  checkIntervalDays?: number | null;
+  isVerifiable?: boolean;
 }
 
 export interface FieldUpdate {

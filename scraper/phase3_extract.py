@@ -29,7 +29,8 @@ import threading
 from typing import Any, Optional
 from urllib.parse import urlparse
 
-from . import phase4_diff, recipe_builder
+from . import brain, phase4_diff, recipe_builder
+from .brain.runtime import cache_html, extract_with_brain
 from .parsers import (
     parse_address,
     parse_jsonld,
@@ -66,9 +67,13 @@ def _merge(record: dict, updates: dict) -> bool:
     return changed
 
 
-def _extract_layers(page, target_city: Optional[str]) -> tuple[dict, dict]:
+def _extract_layers(
+    page, target_city: Optional[str]
+) -> tuple[dict, dict, dict]:
+    """Run all extraction layers. Returns (values, sources, brain_pattern_ids)."""
     out: dict = {}
     src: dict = {}
+    pids: dict = {}  # field -> pattern_id, populated only when brain fires
 
     jl = parse_jsonld(page) or {}
     for k, v in jl.items():
@@ -78,28 +83,51 @@ def _extract_layers(page, target_city: Optional[str]) -> tuple[dict, dict]:
 
     text = get_page_text(page) or ""
     if not text:
-        return out, src
+        return out, src, pids
 
     if "name" not in out:
         n = parse_name_from_page(page)
         if n:
             out["name"] = n
             src["name"] = "regex"
+        else:
+            r = extract_with_brain("name", text=text, page=page)
+            if r:
+                out["name"], pids["name"] = r
+                src["name"] = "brain"
+
     if "phone" not in out:
         p = parse_phone(text)
         if p:
             out["phone"] = p
             src["phone"] = "regex"
+        else:
+            r = extract_with_brain("phone", text=text)
+            if r:
+                out["phone"], pids["phone"] = r
+                src["phone"] = "brain"
+
     if "address" not in out:
         a = parse_address(text, target_city=target_city)
         if a:
             out["address"] = a
             src["address"] = "regex"
+        else:
+            r = extract_with_brain("address", text=text, target_city=target_city)
+            if r:
+                out["address"], pids["address"] = r
+                src["address"] = "brain"
+
     if "opening_hours" not in out:
         h = parse_opening_hours(text)
         if h:
             out["opening_hours"] = h
             src["opening_hours"] = "regex"
+        else:
+            r = extract_with_brain("opening_hours", text=text)
+            if r:
+                out["opening_hours"], pids["opening_hours"] = r
+                src["opening_hours"] = "brain"
 
     if not all(out.get(f) for f in ("address", "phone", "opening_hours")):
         block = contact_block(text)
@@ -109,18 +137,52 @@ def _extract_layers(page, target_city: Optional[str]) -> tuple[dict, dict]:
                 if p:
                     out["phone"] = p
                     src["phone"] = "regex"
+                else:
+                    r = extract_with_brain("phone", text=block)
+                    if r:
+                        out["phone"], pids["phone"] = r
+                        src["phone"] = "brain"
             if "address" not in out:
                 a = parse_address(block, target_city=target_city)
                 if a:
                     out["address"] = a
                     src["address"] = "regex"
+                else:
+                    r = extract_with_brain("address", text=block, target_city=target_city)
+                    if r:
+                        out["address"], pids["address"] = r
+                        src["address"] = "brain"
             if "opening_hours" not in out:
                 h = parse_opening_hours(block)
                 if h:
                     out["opening_hours"] = h
                     src["opening_hours"] = "regex"
+                else:
+                    r = extract_with_brain("opening_hours", text=block)
+                    if r:
+                        out["opening_hours"], pids["opening_hours"] = r
+                        src["opening_hours"] = "brain"
 
-    return out, src
+    return out, src, pids
+
+
+def _record_brain_executions(pids: dict[str, int], extracted: dict) -> None:
+    """Best-effort: log each new brain hit to pattern_executions. No-op if DB down."""
+    if not pids or not brain.is_enabled():
+        return
+    try:
+        import db_repo
+        for field_k, pid in pids.items():
+            val = extracted.get(field_k)
+            val_str = str(val)[:500] if val is not None else None
+            db_repo.record_pattern_execution(
+                pattern_id=pid,
+                outcome="hit",
+                extracted_value=val_str,
+                validator_passed=True,
+            )
+    except Exception as exc:
+        logger.debug("brain: record_pattern_execution failed: %s", exc)
 
 
 def extract_site(
@@ -146,6 +208,7 @@ def extract_site(
     }
     sources: list[str] = []
     field_source: dict[str, str] = {}
+    field_pattern_ids: dict[str, int] = {}
     fetched_pages: dict[str, Any] = {}
     change_detected = False
 
@@ -172,6 +235,7 @@ def extract_site(
             logger.warning("  Failed fetch %s (%s)", label, url)
             continue
         fetched_pages[url] = page
+        cache_html(url, page)  # persist for Phase 4 sandbox seed
 
         if cache_lock:
             with cache_lock:
@@ -190,14 +254,21 @@ def extract_site(
             continue
         change_detected = change_detected or changed
 
-        found, found_src = _extract_layers(page, target_city)
+        found, found_src, found_pids = _extract_layers(page, target_city)
         before = {k: extracted.get(k) for k in REQUIRED_FIELDS}
         if _merge(extracted, found):
+            new_pids: dict[str, int] = {}
             for k in REQUIRED_FIELDS:
                 if extracted.get(k) and not before.get(k):
                     field_source[k] = found_src.get(k, "regex")
+                    if k in found_pids:
+                        field_pattern_ids[k] = found_pids[k]
+                        new_pids[k] = found_pids[k]
             jl_used = any(found_src.get(k) == "jsonld" for k in REQUIRED_FIELDS)
-            sources.append(f"{label}:{'jsonld' if jl_used else 'regex'}")
+            brain_used = any(found_src.get(k) == "brain" for k in REQUIRED_FIELDS)
+            tag = "jsonld" if jl_used else ("brain" if brain_used else "regex")
+            sources.append(f"{label}:{tag}")
+            _record_brain_executions(new_pids, extracted)
 
         record_fields = {k: extracted.get(k) for k in REQUIRED_FIELDS}
         if cache_lock:
@@ -243,6 +314,7 @@ def extract_site(
 
     extracted["data_sources"] = sources
     extracted["field_sources"] = field_source
+    extracted["field_pattern_ids"] = field_pattern_ids
     extracted["extraction_status"] = status
     extracted["change_detected"] = change_detected
     return extracted

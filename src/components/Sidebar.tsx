@@ -1,16 +1,22 @@
-interface SidebarProps {
-  activeRoute: "overview";
+import { NavLink } from "react-router";
+
+interface NavItem {
+  label: string;
+  to: string;
+  icon: string;
+  enabled: boolean;
 }
 
-const NAV_ITEMS = [
-  { label: "Overview", route: "overview", icon: "▦" },
-  { label: "Pipeline Status", route: "pipeline-status", icon: "↻" },
-  { label: "Email Log", route: "email-log", icon: "✉" },
-  { label: "Manual Review", route: "manual-review", icon: "✎" },
-  { label: "Settings", route: "settings", icon: "⚙" },
-] as const;
+const NAV_ITEMS: NavItem[] = [
+  { label: "Overview", to: "/dashboard", icon: "▦", enabled: true },
+  { label: "Pipeline Status", to: "/pipeline-status", icon: "↻", enabled: true },
+  { label: "Costs", to: "/costs", icon: "€", enabled: true },
+  { label: "Email Log", to: "/email-log", icon: "✉", enabled: false },
+  { label: "Manual Review", to: "/manual-review", icon: "✎", enabled: false },
+  { label: "Settings", to: "/settings", icon: "⚙", enabled: false },
+];
 
-export function Sidebar({ activeRoute }: SidebarProps) {
+export function Sidebar() {
   return (
     <aside className="w-60 shrink-0 bg-surface-dark flex flex-col h-full">
       <div className="px-6 py-6">
@@ -21,28 +27,35 @@ export function Sidebar({ activeRoute }: SidebarProps) {
 
       <nav className="flex-1 px-3">
         <ul className="flex flex-col gap-1">
-          {NAV_ITEMS.map(({ label, route, icon }) => {
-            const isActive = route === activeRoute;
-            const isStub = route !== "overview";
-            return (
-              <li
-                key={route}
-                aria-current={isActive ? "page" : undefined}
-                className={[
-                  "px-3 py-2.5 text-sm font-medium border-l-2 flex items-center gap-2.5 rounded-sm",
-                  isActive
-                    ? "text-accent border-accent"
-                    : "text-text-inverse-muted border-transparent hover:text-text-inverse",
-                  isStub ? "pointer-events-none opacity-50" : "",
-                ]
-                  .filter(Boolean)
-                  .join(" ")}
-              >
-                <span className="text-base leading-none">{icon}</span>
-                {label}
-              </li>
-            );
-          })}
+          {NAV_ITEMS.map(({ label, to, icon, enabled }) => (
+            <li key={to}>
+              {enabled ? (
+                <NavLink
+                  to={to}
+                  end={to === "/"}
+                  className={({ isActive }) =>
+                    [
+                      "px-3 py-2.5 text-sm font-medium border-l-2 flex items-center gap-2.5 rounded-sm",
+                      isActive
+                        ? "text-accent border-accent"
+                        : "text-text-inverse-muted border-transparent hover:text-text-inverse",
+                    ].join(" ")
+                  }
+                >
+                  <span className="text-base leading-none">{icon}</span>
+                  {label}
+                </NavLink>
+              ) : (
+                <span
+                  aria-disabled="true"
+                  className="px-3 py-2.5 text-sm font-medium border-l-2 flex items-center gap-2.5 rounded-sm text-text-inverse-muted border-transparent pointer-events-none opacity-50"
+                >
+                  <span className="text-base leading-none">{icon}</span>
+                  {label}
+                </span>
+              )}
+            </li>
+          ))}
         </ul>
       </nav>
     </aside>

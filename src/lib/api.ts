@@ -17,6 +17,8 @@ export interface ListingOut {
   opening_hours?: string | null;
   website_url?: string | null;
   hash_value?: string | null;
+  is_paid?: boolean;
+  is_verifiable?: boolean;
   last_checked?: string | null;
   next_check?: string | null;
   check_interval_days?: number | null;
@@ -41,6 +43,36 @@ export interface VersionOut {
   reviewed_at?: string | null;
   reviewed_by?: string | null;
   created_at?: string | null;
+}
+
+export interface FieldObs {
+  id: number;
+  listing_id: number;
+  field: string;
+  value?: string | null;
+  is_present: boolean;
+  source: string;
+  source_url?: string | null;
+  source_page?: string | null;
+  extraction_confidence?: number | null;
+  observed_at?: string | null;
+}
+
+export interface CostRow {
+  day: string;
+  llm_calls: number;
+  llm_tokens_in: number;
+  llm_tokens_out: number;
+  llm_cost_eur: number;
+  http_requests: number;
+  listings_processed: number;
+}
+
+export interface CostTotals {
+  llm_calls: number;
+  llm_cost_eur: number;
+  http_requests: number;
+  listings_processed: number;
 }
 
 export interface BatchStatus {
@@ -92,6 +124,14 @@ export const api = {
 
   getBatch: (id: number) => apiFetch<BatchStatus>(`/api/batches/${id}`),
 
+  listBatches: (params?: { limit?: number; offset?: number }) => {
+    const p = new URLSearchParams();
+    if (params?.limit !== undefined) p.set("limit", String(params.limit));
+    if (params?.offset !== undefined) p.set("offset", String(params.offset));
+    const qs = p.toString();
+    return apiFetch<{ items: BatchStatus[]; total: number }>(`/api/batches${qs ? `?${qs}` : ""}`);
+  },
+
   getListings: (params?: { q?: string; city?: string; limit?: number; offset?: number }) => {
     const p = new URLSearchParams();
     if (params?.q) p.set("q", params.q);
@@ -101,6 +141,12 @@ export const api = {
     const qs = p.toString();
     return apiFetch<{ items: ListingOut[]; total: number }>(`/api/listings${qs ? `?${qs}` : ""}`);
   },
+
+  getListing: (id: number) =>
+    apiFetch<{ listing: ListingOut; latest_observations: FieldObs[] }>(`/api/listings/${id}`),
+
+  getListingVersions: (id: number) =>
+    apiFetch<VersionOut[]>(`/api/listings/${id}/versions`),
 
   getPendingReviews: (params?: { limit?: number; offset?: number }) => {
     const p = new URLSearchParams();
@@ -118,7 +164,79 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ reason: reason ?? null }),
     }),
+
+  getHealth: () => apiFetch<{ ok: boolean }>("/healthz"),
+
+  getCosts: (from?: string, to?: string) => {
+    const p = new URLSearchParams();
+    if (from) p.set("from", from);
+    if (to) p.set("to", to);
+    const qs = p.toString();
+    return apiFetch<{ items: CostRow[]; totals: CostTotals }>(`/api/costs${qs ? `?${qs}` : ""}`);
+  },
+  getBrainMetrics: () =>
+    apiFetch<BrainMetrics>("/api/brain/metrics"),
+
+  getBrainPatterns: (params?: { field?: string; status?: string }) => {
+    const p = new URLSearchParams();
+    if (params?.field) p.set("field", params.field);
+    if (params?.status) p.set("status", params.status);
+    const qs = p.toString();
+    return apiFetch<{ items: BrainPatternOut[]; total: number }>(
+      `/api/brain/patterns${qs ? `?${qs}` : ""}`,
+    );
+  },
+
+  disablePattern: (id: number) =>
+    apiFetch<{ id: number; status: string }>(`/api/brain/patterns/${id}/disable`, {
+      method: "POST",
+    }),
+
+  sendApprovalEmail: (id: number) =>
+    apiFetch<{ ok: boolean; to: string; message_id: string | null }>(
+      `/api/listings/${id}/send-approval-email`,
+      { method: "POST" },
+    ),
 };
+
+// ---------------------------------------------------------------------------
+// Brain types (mirror api/schemas.py)
+// ---------------------------------------------------------------------------
+
+export interface BrainPatternOut {
+  id: number;
+  field: string;
+  pattern_type: string;
+  pattern: string;
+  language: string;
+  confidence_score: number;
+  success_count: number;
+  failure_count: number;
+  status: string;
+  origin_domain?: string | null;
+  created_at?: string | null;
+  last_used_at?: string | null;
+}
+
+export interface BrainCandidateOut {
+  id: number;
+  field: string;
+  pattern_type: string;
+  candidate_pattern: string;
+  language: string;
+  status: string;
+  sandbox_precision?: number | null;
+  sandbox_recall?: number | null;
+  llm_cost_eur?: number | null;
+  ts?: string | null;
+}
+
+export interface BrainMetrics {
+  pattern_counts: Record<string, number>;
+  accept_rate: number | null;
+  cost_today_eur: number;
+  recent_decisions: BrainCandidateOut[];
+}
 
 // ---------------------------------------------------------------------------
 // Batch polling helper

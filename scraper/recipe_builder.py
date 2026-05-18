@@ -48,6 +48,7 @@ class Recipe:
     domain: str
     field_selectors: dict[str, Optional[dict]] = field(default_factory=dict)
     negative_cache: list[str] = field(default_factory=list)
+    generalized_fields: list[str] = field(default_factory=list)
     status: str = "active"            # active | stale | failed
     recipe_version: int = 1
     last_hash: Optional[str] = None
@@ -57,6 +58,7 @@ class Recipe:
             "domain": self.domain,
             "field_selectors": self.field_selectors,
             "negative_cache": self.negative_cache,
+            "generalized_fields": self.generalized_fields,
             "status": self.status,
             "recipe_version": self.recipe_version,
             "last_hash": self.last_hash,
@@ -68,6 +70,7 @@ class Recipe:
             domain=d["domain"],
             field_selectors=d.get("field_selectors") or {},
             negative_cache=d.get("negative_cache") or [],
+            generalized_fields=d.get("generalized_fields") or [],
             status=d.get("status", "active"),
             recipe_version=d.get("recipe_version", 1),
             last_hash=d.get("last_hash"),
@@ -289,7 +292,7 @@ def _llm_call(missing_fields: list[str], pages_html: dict[str, str]) -> dict:
         api_key=api_key,
         base_url=os.environ.get("OPENAI_BASE_URL") or None,
     )
-    model = os.environ.get("OPENAI_MODEL", "gpt-5-mini")
+    model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 
     user_content = "Fields to find: " + ", ".join(missing_fields) + "\n\n"
     for url, html in pages_html.items():
@@ -397,6 +400,56 @@ def should_rebuild(
     return False
 
 
+def _enqueue_generalize(
+    domain: str,
+    recipe: "Recipe",
+    confirmed_fields: dict,
+    store: Optional["RecipeStore"] = None,
+) -> None:
+    """Best-effort: enqueue generalize_recipe_task for each freshly-extracted field.
+
+    Non-blocking — any import/connection failure is silently logged.
+    Only runs when BRAIN_ENABLED=true. Skips fields already in recipe.generalized_fields
+    so repeated runs don't duplicate LLM calls.
+    """
+    try:
+        from scraper.brain import is_enabled
+        if not is_enabled():
+            return
+    except Exception:
+        return
+
+    try:
+        from api.tasks import generalize_recipe_task
+    except Exception as e:
+        logger.debug("Celery tasks unavailable — skipping generalize enqueue: %s", e)
+        return
+
+    for field_name in confirmed_fields:
+        if field_name in recipe.generalized_fields:
+            logger.debug("[%s] %s already generalized — skipping", domain, field_name)
+            continue
+        sel = recipe.field_selectors.get(field_name)
+        if not sel:
+            continue
+        success = False
+        try:
+            generalize_recipe_task.delay(domain, field_name, sel)
+            logger.debug("[%s] enqueued generalize task for field=%s", domain, field_name)
+            success = True
+        except Exception as e:
+            # Broker unavailable — run synchronously so data still reaches Supabase.
+            logger.debug("[%s] broker unavailable (%s), running generalize inline for %s", domain, e, field_name)
+            try:
+                generalize_recipe_task.apply(args=(domain, field_name, sel))
+                success = True
+            except Exception as e2:
+                logger.warning("[%s] inline generalize failed for %s: %s", domain, field_name, e2)
+        if success and store is not None:
+            recipe.generalized_fields.append(field_name)
+            store.upsert(recipe)
+
+
 def fill_missing(
     domain: str,
     fetched_pages: dict[str, Any],
@@ -442,8 +495,11 @@ def fill_missing(
             domain, fetched_pages, still_missing,
             content_hash=content_hash, prior=recipe,
         )
+        rebuilt.status = "stale"  # already rebuilt once; next run → failed, no more LLM calls
         store.upsert(rebuilt)
         from_rebuild = apply_recipe(rebuilt, fetched_pages, still_missing)
+        if from_rebuild:
+            _enqueue_generalize(domain, rebuilt, from_rebuild, store=store)
         combined = {**from_recipe, **from_rebuild}
         sources = {**{f: "recipe" for f in from_recipe},
                    **{f: "llm" for f in from_rebuild}}
@@ -456,6 +512,8 @@ def fill_missing(
         )
         store.upsert(recipe)
         from_llm = apply_recipe(recipe, fetched_pages, missing_fields)
+        if from_llm:
+            _enqueue_generalize(domain, recipe, from_llm, store=store)
         return from_llm, {f: "llm" for f in from_llm}
 
     # 4. Recipe is failed → don't retry

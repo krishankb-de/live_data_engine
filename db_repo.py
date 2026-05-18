@@ -145,6 +145,95 @@ def touch_listing_hash(listing_id: int, last_checked: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Recheck scheduler — used by pipeline_ug
+# ---------------------------------------------------------------------------
+
+@retry(**_RETRY_KW)
+def pick_due_listings(limit: int = 50, verifiable_only: bool = True) -> list[dict]:
+    """Listings whose next_check is due (NULL or <= now), paid first then by due-date.
+
+    `next_check IS NULL` rows (never-checked) sort first when we order by
+    next_check ASC NULLS FIRST — supabase-py exposes this via nullsfirst=True.
+    """
+    q = (
+        get_client()
+        .table("listings")
+        .select(
+            "id, gs_listing_id, name, website_url, is_paid, is_verifiable, "
+            "check_interval_days, consecutive_unchanged, last_checked, next_check"
+        )
+        .or_(f"next_check.is.null,next_check.lte.{_now()}")
+    )
+    if verifiable_only:
+        q = q.eq("is_verifiable", True)
+    resp = (
+        q.order("is_paid", desc=True)
+         .order("next_check", desc=False, nullsfirst=True)
+         .order("id", desc=False)
+         .limit(limit)
+         .execute()
+    )
+    return resp.data or []
+
+
+@retry(**_RETRY_KW)
+def update_listing_schedule(
+    listing_id: int,
+    *,
+    interval_days: float,
+    consecutive_unchanged: int,
+    next_check_iso: str,
+) -> None:
+    """Persist scheduler state after a recheck run."""
+    get_client().table("listings").update(
+        {
+            "check_interval_days": interval_days,
+            "consecutive_unchanged": consecutive_unchanged,
+            "last_checked": _now(),
+            "next_check": next_check_iso,
+            "updated_at": _now(),
+        }
+    ).eq("id", listing_id).execute()
+
+
+@retry(**_RETRY_KW)
+def get_recipe_pages(domain: str) -> Optional[dict]:
+    """Return the `pages` JSONB blob for a domain, or None if no recipe exists.
+
+    The blob shape is intentionally open: pipeline_ug stores per-page doorman
+    state as {page_name: {"url_path": "/contact", "last_etag": "...",
+    "last_modified": "...", "last_content_hash": "..."}, ...}
+    """
+    resp = (
+        get_client()
+        .table("recipes")
+        .select("id, domain, pages")
+        .eq("domain", domain)
+        .limit(1)
+        .execute()
+    )
+    rows = resp.data or []
+    return rows[0] if rows else None
+
+
+@retry(**_RETRY_KW)
+def save_recipe_pages(domain: str, pages: dict) -> None:
+    """Persist the `pages` blob back to the recipe row. Inserts if missing."""
+    client = get_client()
+    existing = (
+        client.table("recipes").select("id").eq("domain", domain).limit(1).execute()
+    )
+    if existing.data:
+        client.table("recipes").update(
+            {"pages": pages, "last_used_at": _now()}
+        ).eq("domain", domain).execute()
+    else:
+        client.table("recipes").insert(
+            {"domain": domain, "pages": pages, "status": "active"}
+        ).execute()
+
+
+# ---------------------------------------------------------------------------
 # Batches
 # ---------------------------------------------------------------------------
 
@@ -211,6 +300,7 @@ def insert_observation(
     source_url: Optional[str] = None,
     source_page: Optional[str] = None,
     confidence: Optional[float] = None,
+    pattern_id: Optional[int] = None,
 ) -> dict:
     _required = {"listing_id", "field", "is_present", "source"}
     resp = (
@@ -227,6 +317,7 @@ def insert_observation(
                     "source_url": source_url,
                     "source_page": source_page,
                     "extraction_confidence": confidence,
+                    "pattern_id": pattern_id,
                 },
                 always=_required,
             )
@@ -470,3 +561,324 @@ def list_cost_log(from_date: str = "", to_date: str = "") -> list[dict]:
     if to_date:
         qb = qb.lte("day", to_date)
     return qb.order("day", desc=True).execute().data or []
+
+
+@retry(**_RETRY_KW)
+def cost_today_eur(day_iso: str) -> float:
+    resp = (
+        get_client()
+        .table("cost_log")
+        .select("llm_cost_eur")
+        .eq("day", day_iso)
+        .limit(1)
+        .execute()
+    )
+    rows = resp.data or []
+    return float(rows[0]["llm_cost_eur"]) if rows else 0.0
+
+
+# ---------------------------------------------------------------------------
+# Brain: global patterns
+# ---------------------------------------------------------------------------
+# NOTE on atomicity: confidence/success/failure bumps are read-modify-write,
+# matching `bump_cost` style. Acceptable for single-worker dev. For production
+# parallelism, migrate these to Postgres RPC functions (see plan Phase 6).
+
+_BRAIN_ACTIVE_STATUSES = ("trial", "active")
+
+
+@retry(**_RETRY_KW)
+def list_active_patterns(field: str, language: Optional[str] = None) -> list[dict]:
+    """Patterns eligible for the online runtime: trial + active, ordered by confidence DESC."""
+    qb = (
+        get_client()
+        .table("global_patterns")
+        .select("*")
+        .eq("field", field)
+        .in_("status", list(_BRAIN_ACTIVE_STATUSES))
+    )
+    if language:
+        qb = qb.in_("language", [language, "any"])
+    resp = qb.order("confidence_score", desc=True).execute()
+    return resp.data or []
+
+
+@retry(**_RETRY_KW)
+def get_pattern(pattern_id: int) -> Optional[dict]:
+    resp = (
+        get_client()
+        .table("global_patterns")
+        .select("*")
+        .eq("id", pattern_id)
+        .limit(1)
+        .execute()
+    )
+    rows = resp.data or []
+    return rows[0] if rows else None
+
+
+@retry(**_RETRY_KW)
+def insert_pattern(
+    field: str,
+    pattern_type: str,
+    pattern: str,
+    language: str = "any",
+    confidence_score: float = 0.5,
+    status: str = "trial",
+    origin_domain: Optional[str] = None,
+    parent_recipe_id: Optional[int] = None,
+    rationale: Optional[str] = None,
+) -> dict:
+    resp = (
+        get_client()
+        .table("global_patterns")
+        .insert(
+            _compact(
+                {
+                    "field": field,
+                    "pattern_type": pattern_type,
+                    "pattern": pattern,
+                    "language": language,
+                    "confidence_score": confidence_score,
+                    "status": status,
+                    "origin_domain": origin_domain,
+                    "parent_recipe_id": parent_recipe_id,
+                    "rationale": rationale,
+                },
+                always={"field", "pattern_type", "pattern", "language", "confidence_score", "status"},
+            )
+        )
+        .execute()
+    )
+    return (resp.data or [{}])[0]
+
+
+@retry(**_RETRY_KW)
+def bump_pattern_success(pattern_id: int, delta: float = 0.01) -> None:
+    pat = get_pattern(pattern_id)
+    if pat is None:
+        return
+    new_conf = min(1.0, float(pat["confidence_score"]) + delta)
+    get_client().table("global_patterns").update(
+        {
+            "success_count": int(pat["success_count"]) + 1,
+            "confidence_score": new_conf,
+            "last_used_at": _now(),
+        }
+    ).eq("id", pattern_id).execute()
+
+
+@retry(**_RETRY_KW)
+def bump_pattern_failure(pattern_id: int, delta: float = 0.1) -> Optional[float]:
+    """Decrement confidence. Returns new confidence_score (or None if pattern not found)."""
+    pat = get_pattern(pattern_id)
+    if pat is None:
+        return None
+    new_conf = max(0.0, float(pat["confidence_score"]) - delta)
+    get_client().table("global_patterns").update(
+        {
+            "failure_count": int(pat["failure_count"]) + 1,
+            "confidence_score": new_conf,
+            "last_used_at": _now(),
+        }
+    ).eq("id", pattern_id).execute()
+    return new_conf
+
+
+@retry(**_RETRY_KW)
+def set_pattern_status(pattern_id: int, status: str) -> None:
+    get_client().table("global_patterns").update({"status": status}).eq(
+        "id", pattern_id
+    ).execute()
+
+
+@retry(**_RETRY_KW)
+def list_patterns(field: Optional[str] = None, status: Optional[str] = None) -> list[dict]:
+    qb = get_client().table("global_patterns").select("*")
+    if field:
+        qb = qb.eq("field", field)
+    if status:
+        qb = qb.eq("status", status)
+    return qb.order("confidence_score", desc=True).execute().data or []
+
+
+# ---------------------------------------------------------------------------
+# Brain: pattern execution log
+# ---------------------------------------------------------------------------
+
+@retry(**_RETRY_KW)
+def record_pattern_execution(
+    pattern_id: int,
+    outcome: str,
+    listing_id: Optional[int] = None,
+    batch_id: Optional[int] = None,
+    extracted_value: Optional[str] = None,
+    validator_passed: Optional[bool] = None,
+    failing_snippet: Optional[str] = None,
+) -> None:
+    get_client().table("pattern_executions").insert(
+        _compact(
+            {
+                "pattern_id": pattern_id,
+                "listing_id": listing_id,
+                "batch_id": batch_id,
+                "outcome": outcome,
+                "extracted_value": extracted_value,
+                "validator_passed": validator_passed,
+                "failing_snippet": failing_snippet,
+            },
+            always={"pattern_id", "outcome"},
+        )
+    ).execute()
+
+
+@retry(**_RETRY_KW)
+def recent_failing_snippets(pattern_id: int, limit: int = 3) -> list[str]:
+    """Used by repair task to seed the LLM prompt with concrete negatives."""
+    resp = (
+        get_client()
+        .table("pattern_executions")
+        .select("failing_snippet")
+        .eq("pattern_id", pattern_id)
+        .eq("validator_passed", False)
+        .order("ts", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    return [row["failing_snippet"] for row in (resp.data or []) if row.get("failing_snippet")]
+
+
+# ---------------------------------------------------------------------------
+# Brain: sandbox fixtures
+# ---------------------------------------------------------------------------
+
+@retry(**_RETRY_KW)
+def insert_fixture(
+    source_url: str,
+    html_path: str,
+    field: str,
+    expected_value: Optional[str],
+    language: str = "any",
+) -> dict:
+    resp = (
+        get_client()
+        .table("sandbox_fixtures")
+        .insert(
+            {
+                "source_url": source_url,
+                "html_path": html_path,
+                "field": field,
+                "expected_value": expected_value,
+                "language": language,
+            }
+        )
+        .execute()
+    )
+    return (resp.data or [{}])[0]
+
+
+@retry(**_RETRY_KW)
+def list_fixtures(field: Optional[str] = None, language: Optional[str] = None) -> list[dict]:
+    qb = get_client().table("sandbox_fixtures").select("*")
+    if field:
+        qb = qb.eq("field", field)
+    if language:
+        qb = qb.in_("language", [language, "any"])
+    return qb.execute().data or []
+
+
+# ---------------------------------------------------------------------------
+# Brain: candidate queue
+# ---------------------------------------------------------------------------
+
+@retry(**_RETRY_KW)
+def enqueue_candidate(
+    field: str,
+    pattern_type: str,
+    candidate_pattern: str,
+    language: str = "any",
+    parent_recipe_id: Optional[int] = None,
+    parent_pattern_id: Optional[int] = None,
+    llm_cost_eur: float = 0.0,
+    rationale: Optional[str] = None,
+) -> dict:
+    resp = (
+        get_client()
+        .table("candidate_queue")
+        .insert(
+            _compact(
+                {
+                    "field": field,
+                    "pattern_type": pattern_type,
+                    "candidate_pattern": candidate_pattern,
+                    "language": language,
+                    "status": "queued",
+                    "parent_recipe_id": parent_recipe_id,
+                    "parent_pattern_id": parent_pattern_id,
+                    "llm_cost_eur": llm_cost_eur,
+                    "rationale": rationale,
+                },
+                always={"field", "pattern_type", "candidate_pattern", "language", "status"},
+            )
+        )
+        .execute()
+    )
+    return (resp.data or [{}])[0]
+
+
+@retry(**_RETRY_KW)
+def list_candidates(status: Optional[str] = "queued") -> list[dict]:
+    qb = get_client().table("candidate_queue").select("*")
+    if status:
+        qb = qb.eq("status", status)
+    return qb.order("ts").execute().data or []
+
+
+@retry(**_RETRY_KW)
+def update_candidate(
+    candidate_id: int,
+    status: str,
+    sandbox_precision: Optional[float] = None,
+    sandbox_recall: Optional[float] = None,
+    sandbox_details: Optional[dict] = None,
+) -> None:
+    get_client().table("candidate_queue").update(
+        _compact(
+            {
+                "status": status,
+                "sandbox_precision": sandbox_precision,
+                "sandbox_recall": sandbox_recall,
+                "sandbox_details": sandbox_details,
+            },
+            always={"status"},
+        )
+    ).eq("id", candidate_id).execute()
+
+
+def promote_candidate(candidate_id: int, baseline_confidence: float = 0.5) -> dict:
+    """Validated candidate → new row in global_patterns (status='trial')."""
+    cand = (
+        get_client()
+        .table("candidate_queue")
+        .select("*")
+        .eq("id", candidate_id)
+        .limit(1)
+        .execute()
+        .data
+        or [{}]
+    )[0]
+    if not cand:
+        raise LookupError(f"candidate {candidate_id} not found")
+    pat = insert_pattern(
+        field=cand["field"],
+        pattern_type=cand["pattern_type"],
+        pattern=cand["candidate_pattern"],
+        language=cand.get("language") or "any",
+        confidence_score=baseline_confidence,
+        status="trial",
+        origin_domain=None,
+        parent_recipe_id=cand.get("parent_recipe_id"),
+        rationale=cand.get("rationale"),
+    )
+    update_candidate(candidate_id, status="promoted")
+    return pat

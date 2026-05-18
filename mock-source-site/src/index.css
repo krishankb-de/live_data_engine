@@ -1,2 +1,295 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: system-ui, sans-serif; background: #fff; color: #111; }
+body { font-family: system-ui, sans-serif; background: #0d1b2e; color: #f1ece2; }
+
+/* Typography */
+.serif { font-family: Georgia, "Times New Roman", serif; }
+
+/* TopBar */
+.topbar {
+  background: #0d1b2e;
+  border-bottom: 1px solid #1e3352;
+  padding: 14px 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+.topbar__wordmark {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #c9a449;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.topbar__nav {
+  display: flex;
+  gap: 28px;
+  list-style: none;
+}
+.topbar__nav a {
+  color: #f1ece2;
+  text-decoration: none;
+  font-size: 0.875rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  transition: color 150ms ease;
+}
+.topbar__nav a:hover { color: #c9a449; }
+.topbar__contact {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  font-size: 0.8rem;
+}
+.topbar__phone-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.topbar__phone-label { color: #9aa4b2; }
+.topbar__phone-number {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.2rem;
+  color: #c9a449;
+  font-weight: 600;
+}
+.topbar__email { color: #9aa4b2; font-size: 0.78rem; }
+
+/* Pencil button */
+.btn-pencil {
+  background: transparent;
+  border: 1px solid #c9a449;
+  border-radius: 4px;
+  color: #c9a449;
+  cursor: pointer;
+  padding: 2px 7px;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  transition: background 150ms ease, color 150ms ease;
+}
+.btn-pencil:hover { background: #c9a449; color: #0d1b2e; }
+
+/* Phone inline editor */
+.phone-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.phone-input {
+  background: #0d1b2e;
+  border: 1px solid #c9a449;
+  border-radius: 4px;
+  color: #c9a449;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1rem;
+  padding: 4px 10px;
+  width: 220px;
+}
+.btn-save {
+  background: #2d7a4f;
+  border: none;
+  border-radius: 4px;
+  color: #fff;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 4px 12px;
+  transition: background 150ms ease;
+}
+.btn-save:hover { background: #3a9960; }
+.btn-save:disabled { opacity: 0.7; cursor: default; }
+.btn-cancel {
+  background: none;
+  border: none;
+  color: #9aa4b2;
+  cursor: pointer;
+  font-size: 0.75rem;
+  text-decoration: underline;
+  padding: 0;
+}
+.btn-cancel:hover { color: #f1ece2; }
+
+/* Header CTA strip */
+.cta-strip {
+  background: #13243d;
+  padding: 12px 48px;
+  display: flex;
+  justify-content: flex-end;
+}
+.btn-gold {
+  background: #c9a449;
+  border: none;
+  border-radius: 3px;
+  color: #0d1b2e;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 0.85rem;
+  letter-spacing: 0.06em;
+  padding: 10px 24px;
+  text-transform: uppercase;
+  transition: background 150ms ease;
+}
+.btn-gold:hover { background: #d4b15a; }
+
+/* Hero */
+.hero {
+  background-image:
+    linear-gradient(to bottom, rgba(13, 27, 46, 0.80) 0%, rgba(13, 27, 46, 0.75) 100%),
+    url('/hero-signing.webp');
+  background-size: cover;
+  background-position: center 40%;
+  background-color: #0d1b2e;
+  min-height: 580px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 96px 48px;
+  text-align: center;
+  border-top: 2px solid #1e3352;
+}
+.hero__eyebrow {
+  color: #c9a449;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  margin-bottom: 20px;
+}
+.hero__h1 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(2rem, 4.5vw, 3.2rem);
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: 20px;
+  color: #f1ece2;
+}
+.hero__sub {
+  color: #d4cfc7;
+  font-size: 1.05rem;
+  line-height: 1.7;
+  max-width: 640px;
+  margin: 0 auto 40px;
+}
+
+/* Welcome */
+.welcome {
+  background: #f1ece2;
+  padding: 80px 48px;
+  color: #0d1b2e;
+}
+.welcome__inner { max-width: 860px; margin: 0 auto; }
+.welcome__h2 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(1.5rem, 3vw, 2.2rem);
+  font-weight: 700;
+  margin-bottom: 20px;
+  color: #0d1b2e;
+}
+.welcome__p {
+  color: #3a4555;
+  line-height: 1.85;
+}
+
+/* Practice Areas */
+.practice {
+  background: #0d1b2e;
+  padding: 80px 48px;
+}
+.practice__inner { max-width: 1100px; margin: 0 auto; }
+.practice__heading {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(1.5rem, 3vw, 2.1rem);
+  font-weight: 700;
+  color: #f1ece2;
+  text-align: center;
+  margin-bottom: 48px;
+}
+.practice__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 24px;
+}
+.practice__card {
+  background: #13243d;
+  border: 1px solid #1e3352;
+  border-radius: 6px;
+  padding: 32px 28px;
+  transition: border-color 200ms ease;
+}
+.practice__card:hover { border-color: #c9a449; }
+.practice__card-title {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #f1ece2;
+  margin-bottom: 10px;
+}
+.practice__card-blurb {
+  color: #9aa4b2;
+  font-size: 0.88rem;
+  line-height: 1.65;
+  margin-bottom: 16px;
+}
+.practice__card-link {
+  color: #c9a449;
+  font-size: 0.83rem;
+  font-weight: 600;
+  text-decoration: none;
+  letter-spacing: 0.05em;
+}
+.practice__card-link:hover { text-decoration: underline; }
+
+/* Contact strip / footer */
+.footer {
+  background: #0a1626;
+  border-top: 2px solid #1e3352;
+  padding: 56px 48px 32px;
+}
+.footer__grid {
+  max-width: 1100px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 40px;
+  margin-bottom: 40px;
+}
+.footer__brand {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #c9a449;
+  letter-spacing: 0.06em;
+  margin-bottom: 12px;
+}
+.footer__copy { color: #9aa4b2; font-size: 0.82rem; line-height: 1.7; }
+.footer__col-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #c9a449;
+  margin-bottom: 12px;
+}
+.footer__col-text { color: #9aa4b2; font-size: 0.88rem; line-height: 1.7; }
+.footer__bottom {
+  text-align: center;
+  color: #3a4555;
+  font-size: 0.78rem;
+  border-top: 1px solid #1e3352;
+  padding-top: 20px;
+}
+
+@media (max-width: 768px) {
+  .topbar { padding: 14px 20px; flex-direction: column; align-items: flex-start; }
+  .topbar__contact { align-items: flex-start; }
+  .cta-strip { padding: 12px 20px; }
+  .hero { padding: 64px 20px; min-height: 480px; background-position: center 30%; }
+  .welcome { padding: 56px 20px; }
+  .practice { padding: 56px 20px; }
+  .footer { padding: 48px 20px 24px; }
+  .footer__grid { grid-template-columns: 1fr; gap: 28px; }
+}

@@ -10,3 +10,4 @@ fastapi
 uvicorn[standard]
 PyJWT
 celery[redis]
+resend

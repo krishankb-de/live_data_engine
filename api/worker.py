@@ -23,6 +23,15 @@ celery_app.conf.update(
     task_track_started=True,
     task_acks_late=True,
     worker_prefetch_multiplier=1,
+    # Fail fast when Redis is unavailable so inline fallback kicks in quickly.
+    broker_transport_options={"socket_connect_timeout": 3, "socket_timeout": 3},
+    result_backend_transport_options={"socket_connect_timeout": 3, "socket_timeout": 3},
+    beat_schedule={
+        "recheck-due-listings": {
+            "task": "api.tasks.run_recheck_batch_task",
+            "schedule": float(os.environ.get("RECHECK_BEAT_SECONDS", "300")),  # default 5m
+        },
+    },
 )
 
 celery_app.autodiscover_tasks(["api.tasks"])

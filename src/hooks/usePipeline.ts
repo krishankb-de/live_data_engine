@@ -42,6 +42,8 @@ function mapListingOut(row: ListingOut, pendingVersions: VersionOut[]): Listing 
     confidence: hasReview ? (mine[0].intent_confidence ?? null) : null,
     changedFields: [...new Set(mine.map((v) => v.field))] as MonitoredField[],
     emailSent: false,
+    checkIntervalDays: row.check_interval_days ?? null,
+    isVerifiable: row.is_verifiable ?? false,
   };
 }
 

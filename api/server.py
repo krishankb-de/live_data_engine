@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
-from api.routes import batches, listings, versions
+from api.routes import batches, brain, listings, notifications, versions
 
 logging.basicConfig(
     level=logging.INFO,
@@ -73,6 +73,8 @@ async def structured_logging_middleware(request: Request, call_next) -> Response
 app.include_router(batches.router)
 app.include_router(listings.router)
 app.include_router(versions.router)
+app.include_router(brain.router)
+app.include_router(notifications.router)
 
 
 @app.get("/healthz")

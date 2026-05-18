@@ -7,6 +7,8 @@ ROOT = Path(__file__).parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+pytest_plugins = ["tests.conftest_mock_site"]
+
 
 def pytest_addoption(parser):
     parser.addoption(

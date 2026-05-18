@@ -1,0 +1,1 @@
+export { ListingDetailPage } from "./page";

@@ -118,3 +118,72 @@ CREATE TABLE IF NOT EXISTS cost_log (
     http_requests      INTEGER DEFAULT 0,
     listings_processed INTEGER DEFAULT 0
 );
+
+-- ---------------------------------------------------------------------------
+-- Self-learning brain (Phase 2). See plan: read-the-compelte-codebase-abstract-haven.md
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS global_patterns (
+    id                BIGSERIAL PRIMARY KEY,
+    field             TEXT NOT NULL,                  -- 'phone' | 'address' | 'opening_hours' | 'name'
+    pattern_type      TEXT NOT NULL,                  -- 'regex' | 'css'
+    pattern           TEXT NOT NULL,
+    language          TEXT NOT NULL DEFAULT 'any',    -- 'de' | 'en' | 'fr' | 'any'
+    confidence_score  DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+    success_count     INTEGER NOT NULL DEFAULT 0,
+    failure_count     INTEGER NOT NULL DEFAULT 0,
+    status            TEXT NOT NULL DEFAULT 'trial',  -- 'trial' | 'active' | 'stale' | 'disabled'
+    origin_domain     TEXT,
+    parent_recipe_id  BIGINT REFERENCES recipes(id),
+    rationale         TEXT,
+    created_at        TIMESTAMPTZ DEFAULT now(),
+    last_used_at      TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_patterns_field_status ON global_patterns (field, status, confidence_score DESC);
+CREATE INDEX IF NOT EXISTS idx_patterns_language     ON global_patterns (language);
+
+CREATE TABLE IF NOT EXISTS sandbox_fixtures (
+    id              BIGSERIAL PRIMARY KEY,
+    source_url      TEXT NOT NULL,
+    html_path       TEXT NOT NULL,                    -- relative to output/html_cache/
+    field           TEXT NOT NULL,
+    expected_value  TEXT,                             -- NULL = negative fixture (field absent)
+    language        TEXT NOT NULL DEFAULT 'any',
+    captured_at     TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_fixtures_field_lang ON sandbox_fixtures (field, language);
+
+CREATE TABLE IF NOT EXISTS pattern_executions (
+    id                BIGSERIAL PRIMARY KEY,
+    pattern_id        BIGINT NOT NULL REFERENCES global_patterns(id),
+    listing_id        BIGINT REFERENCES listings(id),
+    batch_id          BIGINT REFERENCES batches(id),
+    outcome           TEXT NOT NULL,                  -- 'hit' | 'miss' | 'invalid'
+    extracted_value   TEXT,
+    validator_passed  BOOLEAN,
+    failing_snippet   TEXT,
+    ts                TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_exec_pattern_ts ON pattern_executions (pattern_id, ts DESC);
+
+CREATE TABLE IF NOT EXISTS candidate_queue (
+    id                  BIGSERIAL PRIMARY KEY,
+    parent_recipe_id    BIGINT REFERENCES recipes(id),
+    parent_pattern_id   BIGINT REFERENCES global_patterns(id),
+    field               TEXT NOT NULL,
+    pattern_type        TEXT NOT NULL,                              -- 'regex' | 'css'
+    candidate_pattern   TEXT NOT NULL,
+    language            TEXT NOT NULL DEFAULT 'any',
+    status              TEXT NOT NULL DEFAULT 'queued',             -- 'queued' | 'validating' | 'promoted' | 'rejected'
+    sandbox_precision   DOUBLE PRECISION,
+    sandbox_recall      DOUBLE PRECISION,
+    sandbox_details     JSONB,
+    llm_cost_eur        DOUBLE PRECISION DEFAULT 0,
+    rationale           TEXT,
+    ts                  TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_candidates_status ON candidate_queue (status, ts);
+
+-- Add pattern_id provenance to field_observations (safe on existing tables).
+ALTER TABLE field_observations ADD COLUMN IF NOT EXISTS pattern_id BIGINT REFERENCES global_patterns(id);
+CREATE INDEX IF NOT EXISTS idx_obs_pattern ON field_observations (pattern_id);

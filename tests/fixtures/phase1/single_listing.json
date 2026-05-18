@@ -1,0 +1,10 @@
+[
+  {
+    "name": "Attorneyster Buchhandlung",
+    "gelbeseiten_url": "",
+    "gs_uuid": "e2e-fixture-attorneyster",
+    "website_url": "http://127.0.0.1:5174/site",
+    "is_verifiable": true,
+    "target_city": "Berlin"
+  }
+]

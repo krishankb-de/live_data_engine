@@ -95,3 +95,53 @@ class PaginatedVersions(BaseModel):
 class PaginatedBatches(BaseModel):
     items: list[BatchStatus]
     total: int
+
+
+# ---------------------------------------------------------------------------
+# Brain schemas
+# ---------------------------------------------------------------------------
+
+class BrainPatternOut(BaseModel):
+    id: int
+    field: str
+    pattern_type: str
+    pattern: str
+    language: str
+    confidence_score: float
+    success_count: int
+    failure_count: int
+    status: str
+    origin_domain: Optional[str] = None
+    parent_recipe_id: Optional[int] = None
+    created_at: Optional[datetime] = None
+    last_used_at: Optional[datetime] = None
+
+
+class BrainCandidateOut(BaseModel):
+    id: int
+    field: str
+    pattern_type: str
+    candidate_pattern: str
+    language: str
+    status: str
+    sandbox_precision: Optional[float] = None
+    sandbox_recall: Optional[float] = None
+    llm_cost_eur: Optional[float] = None
+    ts: Optional[datetime] = None
+
+
+class BrainMetrics(BaseModel):
+    pattern_counts: dict[str, int]
+    accept_rate: Optional[float] = None
+    cost_today_eur: float
+    recent_decisions: list[Any]
+
+
+class PaginatedBrainPatterns(BaseModel):
+    items: list[BrainPatternOut]
+    total: int
+
+
+class PaginatedBrainCandidates(BaseModel):
+    items: list[BrainCandidateOut]
+    total: int
