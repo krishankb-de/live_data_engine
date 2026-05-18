@@ -33,6 +33,14 @@ if str(ROOT) not in sys.path:
 
 pytestmark = pytest.mark.e2e
 
+# ── brain regex patterns seeded for the brain HTML tier ───────────────────────
+# CSS patterns can't be used: extract_with_brain("phone"/"address"/"opening_hours")
+# is called with text= only (no page=), so only regex patterns can match.
+# Brain HTML phone format: bare digits "030300001" — normal phone regex won't match.
+_BRAIN_PATTERNS = [
+    ("phone", "regex", r"030\d{6,}"),
+]
+
 # ── Batch sizes ───────────────────────────────────────────────────────────────
 N_JSONLD  = 150
 N_REGEX   = 100
@@ -41,7 +49,29 @@ N_LLM     = 25
 TOTAL     = N_JSONLD + N_REGEX + N_BRAIN + N_LLM   # 300
 
 MOCK_HOST = "http://127.0.0.1:15174"
+_MOCK_DOMAIN = "127.0.0.1:15174"
 _TS = int(time.time())
+
+
+def _clear_test_recipe() -> None:
+    """Remove the stale domain-level recipe so the LLM tier fires fresh each run.
+    Deletes the entire file if it's corrupted by a prior concurrent write."""
+    try:
+        from scraper.recipe_builder import RECIPES_FILE
+        if not RECIPES_FILE.exists():
+            return
+        try:
+            data = json.loads(RECIPES_FILE.read_text())
+        except (json.JSONDecodeError, ValueError):
+            RECIPES_FILE.unlink(missing_ok=True)
+            print(f"\n[RECIPE RESET] Deleted corrupted {RECIPES_FILE.name}")
+            return
+        if _MOCK_DOMAIN in data:
+            del data[_MOCK_DOMAIN]
+            RECIPES_FILE.write_text(json.dumps(data, indent=2))
+            print(f"\n[RECIPE RESET] Cleared recipe for {_MOCK_DOMAIN}")
+    except Exception as exc:
+        print(f"\n[RECIPE RESET] Failed: {exc}")
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -69,12 +99,77 @@ def _run_phases_23(prefix: str) -> list:
     return run_phase3(prefix=prefix)
 
 
-# ── fixture ───────────────────────────────────────────────────────────────────
+# ── fixtures ──────────────────────────────────────────────────────────────────
 
 @pytest.fixture(scope="module")
 def mock_server_running(mock_site_server):
     """Ensure the Python mock server is up (provided by conftest_mock_site.py)."""
     return mock_site_server
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _setup_brain_and_env(request, mock_site_server):
+    """
+    Before any test in this module:
+      1. Load .env (OPENAI_API_KEY + Supabase creds).
+      2. If --online: seed brain CSS patterns into Supabase, enable BRAIN_ENABLED=1.
+      3. Invalidate the in-process brain pattern cache so phase3 loads fresh patterns.
+      4. Reset class-level record cache so extraction re-runs with brain enabled.
+
+    Teardown: remove seeded patterns and restore env.
+    """
+    from dotenv import load_dotenv
+    load_dotenv(ROOT / ".env")
+
+    if not request.config.getoption("--online", default=False):
+        _clear_test_recipe()
+        yield
+        return
+
+    # Reset record cache so this session re-extracts with brain on
+    TestE2E300Listings._records = None
+    TestE2E300Listings._prefix  = None
+
+    # Clear any stale recipe for our test domain so the LLM tier fires fresh.
+    # Without this, a "failed" recipe from a prior run suppresses all LLM calls.
+    _clear_test_recipe()
+
+    os.environ["BRAIN_ENABLED"] = "1"
+
+    seeded_ids: list[int] = []
+    try:
+        import db_repo
+        from scraper.brain.runtime import invalidate_cache
+        for field, ptype, pattern in _BRAIN_PATTERNS:
+            row = db_repo.insert_pattern(
+                field=field,
+                pattern_type=ptype,
+                pattern=pattern,
+                language="de",
+                confidence_score=0.80,
+                status="active",
+                origin_domain="127.0.0.1",
+                rationale="e2e-300-listings test fixture",
+            )
+            if row and row.get("id"):
+                seeded_ids.append(row["id"])
+                print(f"\n[BRAIN SETUP] Seeded pattern id={row['id']} field={field} pattern={pattern!r}")
+        invalidate_cache()
+        print(f"[BRAIN SETUP] {len(seeded_ids)} patterns seeded, cache invalidated, BRAIN_ENABLED=1")
+    except Exception as exc:
+        print(f"\n[BRAIN SETUP] Could not seed patterns: {exc}")
+
+    yield
+
+    # Cleanup
+    try:
+        from scraper.supabase_client import get_client
+        for pid in seeded_ids:
+            get_client().table("global_patterns").delete().eq("id", pid).execute()
+        print(f"\n[BRAIN TEARDOWN] Removed {len(seeded_ids)} seeded patterns")
+    except Exception:
+        pass
+    os.environ.pop("BRAIN_ENABLED", None)
 
 
 # ── Main test ─────────────────────────────────────────────────────────────────
@@ -210,7 +305,7 @@ class TestE2E300Listings:
         records = self._ensure_run(mock_server_running)
         brain_recs = [
             r for r in records
-            if f"/listing/brain/" in r.get("website_url", "")
+            if "/listing/brain/" in r.get("website_url", "")
         ]
         brain_hits = sum(
             1 for r in brain_recs
@@ -222,14 +317,14 @@ class TestE2E300Listings:
         )
         print(f"\n[BRAIN] listings with >=1 brain field: {brain_hits}/{N_BRAIN}")
         print(f"[BRAIN] total brain-sourced fields: {total_fields_brain}")
-        # If no brain patterns exist in DB we won't get brain hits — that's OK,
-        # just assert the run didn't crash (covered above). Skip assertion if 0.
-        if brain_hits == 0:
+
+        brain_enabled = os.environ.get("BRAIN_ENABLED", "").lower() in ("1", "true", "yes")
+        if not brain_enabled or brain_hits == 0:
             pytest.skip(
-                "Brain did not fire for any listing — no active patterns in DB. "
-                "Seed patterns via /api/brain/patterns to exercise tier 4."
+                "Brain did not fire — either BRAIN_ENABLED not set or no active patterns. "
+                "Run with --online to seed patterns automatically."
             )
-        assert brain_hits > 0
+        assert brain_hits > 0, f"Expected brain hits on {N_BRAIN} brain listings"
 
     # ── T5: LLM/Recipe tier (listings 0–24) ───────────────────────────────────
 
@@ -249,22 +344,29 @@ class TestE2E300Listings:
             )
 
     def test_llm_tier_recipe_fires_when_api_key_present(self, mock_server_running):
-        """If OPENAI_API_KEY set, recipe builder must attempt to extract missing fields."""
+        """If OPENAI_API_KEY set, recipe/LLM builder must extract at least some fields."""
         if not os.environ.get("OPENAI_API_KEY"):
             pytest.skip("OPENAI_API_KEY not set — recipe/LLM tier not exercised")
 
         records = self._ensure_run(mock_server_running)
         llm_recs = [
             r for r in records
-            if f"/listing/llm/" in r.get("website_url", "")
+            if "/listing/llm/" in r.get("website_url", "")
         ]
-        recipe_hits = sum(
+        # first-build returns "llm" source; cached-recipe hits return "recipe"
+        recipe_or_llm_hits = sum(
             1 for r in llm_recs
-            if "recipe" in r.get("field_sources", {}).values()
+            if any(src in ("recipe", "llm") for src in r.get("field_sources", {}).values())
         )
-        print(f"\n[LLM/RECIPE] recipe-sourced listings: {recipe_hits}/{N_LLM}")
-        assert recipe_hits > 0, (
-            f"OPENAI_API_KEY is set but recipe builder fired 0 times on {N_LLM} LLM listings"
+        src_dist: dict = {}
+        for r in llm_recs:
+            for src in r.get("field_sources", {}).values():
+                src_dist[src] = src_dist.get(src, 0) + 1
+        print(f"\n[LLM/RECIPE] listings with recipe/llm source: {recipe_or_llm_hits}/{N_LLM}")
+        print(f"[LLM/RECIPE] field source breakdown: {src_dist}")
+        assert recipe_or_llm_hits > 0, (
+            f"OPENAI_API_KEY is set but recipe/LLM builder fired 0 times on {N_LLM} listings. "
+            f"sources seen: {src_dist}"
         )
 
     # ── T6: Global tier-distribution summary ──────────────────────────────────
@@ -305,6 +407,8 @@ class TestE2E300Listings:
             "field_sources": dict(source_counts),
             "complete_pct": round(100 * total_complete / TOTAL, 1),
             "partial_pct":  round(100 * total_partial  / TOTAL, 1),
+            "brain_enabled": os.environ.get("BRAIN_ENABLED", "0"),
+            "openai_key_set": bool(os.environ.get("OPENAI_API_KEY")),
         }
         out_path = ROOT / "output" / f"e2e_300_summary_{_TS}.json"
         out_path.parent.mkdir(exist_ok=True)

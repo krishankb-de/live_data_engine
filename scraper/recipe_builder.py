@@ -92,8 +92,14 @@ class RecipeStore:
     def _load_all(self) -> dict[str, dict]:
         if not self.path.exists():
             return {}
-        with open(self.path) as f:
-            return json.load(f)
+        try:
+            with open(self.path) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, ValueError):
+            # Corrupted by a concurrent write — reset the file
+            logger.warning("recipes.json corrupted; resetting to empty")
+            self.path.write_text("{}")
+            return {}
 
     def _save_all(self, data: dict[str, dict]) -> None:
         with open(self.path, "w") as f:

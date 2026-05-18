@@ -71,7 +71,9 @@ def _generate_listing_html(kind: str, n: int) -> str:
 </body></html>"""
 
     if kind == "brain":
-        phone = f"+49 30 {300000 + n}"
+        # Phone stored as bare digits (no +49 prefix, no spaces) → regex won't match.
+        # Brain CSS pattern "span.brain-tel::text" extracts it; post-processor normalises.
+        phone_digits = f"030{300000 + n}"
         street = f"Testweg {n % 100 + 1}"
         postal = f"1{n % 9000 + 1000}"
         name = f"Brain Firma {n}"
@@ -79,27 +81,32 @@ def _generate_listing_html(kind: str, n: int) -> str:
 <html lang="de"><head><meta charset="utf-8"/><title>{name}</title></head>
 <body><h1>{name}</h1>
 <div class="contact-block">
-  <span class="tel" data-value="{phone}">{phone}</span>
-  <div class="addr">{street}, {postal} Berlin</div>
-  <div class="hrs">Mo-Fr 10:00-17:00</div>
+  <span class="brain-tel">{phone_digits}</span>
+  <div class="brain-addr">{street}, {postal} Berlin</div>
+  <div class="brain-hrs">Mo-Fr 10:00-17:00</div>
 </div>
 <p>Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler.</p>
 <footer><p>Impressum. Alle Rechte vorbehalten.</p></footer>
 </body></html>"""
 
-    # kind == "llm" — obfuscated data elements that bypass standard regex
-    phone = f"+49 30 {400000 + n}"
+    # kind == "llm"
+    # Phone as bare digits with no +49/0XX separator → regex won't match.
+    # Uses 040 prefix (Hamburg area code) so brain regex "030\d{6,}" also won't match.
+    # Address in normal German format → regex extracts it (fewer missing fields = cheaper LLM call).
+    # Hours as German word-form → regex won't match.
+    # CSS selectors biz-phone / biz-hours are visible text the LLM can target.
+    phone_digits = f"040{400000 + n}"
     street = f"Serviceweg {n % 100 + 1}"
     postal = f"1{n % 9000 + 1000}"
     name = f"LLM Service {n}"
     return f"""<!doctype html>
 <html lang="de"><head><meta charset="utf-8"/><title>{name}</title></head>
 <body><h1>{name}</h1>
-<section id="info">
-  <data class="p" value="{phone}">Kontakt</data>
-  <data class="a">{street}, {postal} Berlin</data>
-  <data class="h">Mo bis Fr, neun bis achtzehn Uhr</data>
-</section>
+<div class="business-info">
+  <p>Adresse: {street}, {postal} Berlin</p>
+  <p>Erreichbarkeit: <span class="biz-phone">{phone_digits}</span></p>
+  <p>Zeiten: <span class="biz-hours">Montag bis Freitag, neun bis achtzehn Uhr</span></p>
+</div>
 <p>Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler.</p>
 <footer><p>Impressum.</p></footer>
 </body></html>"""
@@ -118,6 +125,21 @@ _FIXTURE_FILES = {
 
 MOCK_SITE_PORT = 15174
 MOCK_SITE_HOST = "127.0.0.1"
+
+# All KNOWN_PATHS that phase2 probes for every listing.  Returning empty HTML
+# here prevents the phase4 cache from leaking phone/hours extracted from one
+# listing's homepage into a different listing's extraction via a shared URL.
+_EMPTY_PAGE_PATHS = frozenset([
+    "/impressum", "/impressum/", "/impressum.html", "/impressum.php",
+    "/imprint", "/legal", "/legal-notice", "/mentions-legales", "/mentions-legales/",
+    "/ueber-uns/impressum",
+    "/oeffnungszeiten", "/oeffnungszeiten/", "/opening-hours", "/hours",
+    "/horaires", "/horaires/",
+    "/kontakt", "/kontakt/", "/contact", "/contact/", "/contact-us",
+    "/kontakt.html", "/anfahrt",
+    "/filialen", "/filialen/", "/standorte", "/standort",
+    "/branch", "/locations", "/succursale", "/magasins",
+])
 
 
 def _etag(content: str) -> str:
@@ -209,6 +231,16 @@ class _Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 return
             self._send(200, "text/html", html, {"ETag": etag})
+            return
+
+        # KNOWN_PATHS (impressum, kontakt, hours, branch, etc.) return empty HTML
+        # so the phase4 in-memory cache populated by earlier listings does not
+        # spill phone/hours into LLM listings that share the same origin domain.
+        if parsed.path in _EMPTY_PAGE_PATHS:
+            self._send(200, "text/html",
+                "<!doctype html><html><head><meta charset='utf-8'>"
+                "<title>Seite</title></head>"
+                "<body><p>Keine Inhalte.</p></body></html>")
             return
 
         # Any path that isn't a control endpoint serves the main page HTML.
