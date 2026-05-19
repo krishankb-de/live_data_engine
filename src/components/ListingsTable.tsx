@@ -81,7 +81,11 @@ export function ListingsTable({ listings, onRowClick }: ListingsTableProps) {
                 )}
               </td>
               <td className="px-4 py-4 text-sm text-text-muted">
-                {listing.checkIntervalDays != null ? `${listing.checkIntervalDays}d` : "—"}
+                {listing.checkIntervalDays != null
+                  ? listing.checkIntervalDays < 1
+                    ? `${(listing.checkIntervalDays * 24).toFixed(1)}H`
+                    : `${listing.checkIntervalDays}d`
+                  : "—"}
               </td>
               <td className="px-4 py-4 text-sm">
                 {listing.isVerifiable ? (

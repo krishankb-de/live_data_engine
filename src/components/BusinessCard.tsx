@@ -24,7 +24,11 @@ export function BusinessCard({ listing, observations = [] }: BusinessCardProps) 
     {
       label: "Check Interval",
       field: null,
-      value: listing.checkIntervalDays != null ? `${listing.checkIntervalDays}d` : "",
+      value: listing.checkIntervalDays != null
+        ? listing.checkIntervalDays < 1
+          ? `${(listing.checkIntervalDays * 24).toFixed(1)}H`
+          : `${listing.checkIntervalDays}d`
+        : "",
     },
     {
       label: "Verifiable",
