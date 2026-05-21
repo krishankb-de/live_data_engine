@@ -149,6 +149,26 @@ def touch_listing_hash(listing_id: int, last_checked: str) -> None:
 # ---------------------------------------------------------------------------
 
 @retry(**_RETRY_KW)
+def get_all_verifiable_listings(limit: int = 500) -> list[dict]:
+    """All verifiable listings that have a website_url, regardless of next_check schedule.
+
+    Used by the forced pipeline run so every verifiable site is rechecked even if
+    it didn't appear in the Gelbe Seiten scrape (phase 1).
+    """
+    resp = (
+        get_client()
+        .table("listings")
+        .select(
+            "id, gs_listing_id, name, website_url, phone, address, opening_hours"
+        )
+        .eq("is_verifiable", True)
+        .limit(limit)
+        .execute()
+    )
+    return [r for r in (resp.data or []) if r.get("website_url")]
+
+
+@retry(**_RETRY_KW)
 def pick_due_listings(limit: int = 50, verifiable_only: bool = True) -> list[dict]:
     """Listings whose next_check is due (NULL or <= now), paid first then by due-date.
 

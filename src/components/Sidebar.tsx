@@ -11,9 +11,9 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Overview", to: "/dashboard", icon: "▦", enabled: true },
   { label: "Pipeline Status", to: "/pipeline-status", icon: "↻", enabled: true },
   { label: "Costs", to: "/costs", icon: "€", enabled: true },
-  { label: "Email Log", to: "/email-log", icon: "✉", enabled: false },
-  { label: "Manual Review", to: "/manual-review", icon: "✎", enabled: false },
-  { label: "Settings", to: "/settings", icon: "⚙", enabled: false },
+  { label: "Email Log", to: "/email-log", icon: "✉", enabled: true },
+  { label: "Manual Review", to: "/manual-review", icon: "✎", enabled: true },
+  { label: "Settings", to: "/settings", icon: "⚙", enabled: true },
 ];
 
 export function Sidebar() {

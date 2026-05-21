@@ -5,7 +5,6 @@ import { RowModal } from "../../components/RowModal";
 import { BusinessCard } from "../../components/BusinessCard";
 import { DiffPanel } from "../../components/DiffPanel";
 import { AuditLogCard } from "../../components/AuditLogCard";
-import { BrainStatusPanel } from "../../components/BrainStatusPanel";
 import { listings as initialListings, seedKpi } from "../../models/fixtures";
 import { usePipeline } from "../../hooks/usePipeline";
 import { useLivePoll } from "../../hooks/useLivePoll";
@@ -190,7 +189,7 @@ export function DashboardPage() {
           open={true}
           onClose={() => setSelectedListing(null)}
           onAccept={
-            selectedListing.status === "needs_review"
+            selectedListing.status === "needs_review" && !selectedListing.emailSent
               ? () => {
                   accept(selectedListing.id);
                   setSelectedListing(null);
@@ -198,12 +197,15 @@ export function DashboardPage() {
               : undefined
           }
           onReject={
-            selectedListing.status === "needs_review"
+            selectedListing.status === "needs_review" && !selectedListing.emailSent
               ? () => {
                   reject(selectedListing.id);
                   setSelectedListing(null);
                 }
               : undefined
+          }
+          emailSentPending={
+            selectedListing.status === "needs_review" && selectedListing.emailSent === true
           }
         >
           <div className="p-6 flex flex-col gap-4">

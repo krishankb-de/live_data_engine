@@ -95,14 +95,13 @@ export function usePipeline(
       }
       setFieldUpdatesByListing(byListing);
 
-      const autoUpdates = mapped.filter((l) => l.status === "auto_applied").length;
       const needsReview = mapped.filter((l) => l.status === "needs_review").length;
-      setKpi({
+      setKpi((prev) => ({
+        ...prev,
         entriesChecked: listingsResp.total,
-        autoUpdates,
         needsReview,
-        updatesToday: autoUpdates + needsReview,
-      });
+        updatesToday: prev.autoUpdates + needsReview,
+      }));
     } catch {
       // Backend unreachable — keep fixture state
       apiAvailableRef.current = false;
@@ -170,17 +169,16 @@ export function usePipeline(
       });
 
       setStep("done");
+      console.log("[pipeline] batch result:", final);
       await fetchAll();
 
-      if (final.listings_processed > 0) {
-        setKpi((prev) => ({
-          ...prev,
-          entriesChecked: final.listings_processed,
-          autoUpdates: final.changes_auto_applied,
-          needsReview: final.changes_review_queue,
-          updatesToday: final.changes_auto_applied + final.changes_review_queue,
-        }));
-      }
+      setKpi((prev) => ({
+        ...prev,
+        ...(final.listings_processed > 0 && { entriesChecked: final.listings_processed }),
+        autoUpdates: final.changes_auto_applied,
+        needsReview: final.changes_review_queue,
+        updatesToday: final.changes_auto_applied + final.changes_review_queue,
+      }));
     } catch (e) {
       console.error("Pipeline run failed:", e);
       setStep("idle");

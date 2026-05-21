@@ -1,14 +1,16 @@
 import { useEffect } from "react";
+import { Link } from "react-router";
 
 interface RowModalProps {
   open: boolean;
   onClose: () => void;
   onAccept?: () => void;
   onReject?: () => void;
+  emailSentPending?: boolean;
   children: React.ReactNode;
 }
 
-export function RowModal({ open, onClose, onAccept, onReject, children }: RowModalProps) {
+export function RowModal({ open, onClose, onAccept, onReject, emailSentPending, children }: RowModalProps) {
   useEffect(() => {
     if (!open) return;
 
@@ -61,6 +63,27 @@ export function RowModal({ open, onClose, onAccept, onReject, children }: RowMod
           </svg>
         </button>
         {children}
+
+        {emailSentPending && (
+          <div className="mx-6 mb-6 mt-2 rounded-lg border border-warning/40 bg-warning/10 px-5 py-4 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <span className="text-lg leading-none">✉</span>
+              <div>
+                <p className="text-sm font-semibold text-text">Email Sent — Pending from the User</p>
+                <p className="text-xs text-text-muted mt-0.5">
+                  An approval email was sent to the business. Review and action in Email Log.
+                </p>
+              </div>
+            </div>
+            <Link
+              to="/email-log"
+              onClick={onClose}
+              className="shrink-0 text-xs font-semibold text-primary hover:underline"
+            >
+              Go to Email Log →
+            </Link>
+          </div>
+        )}
 
         {(onAccept || onReject) && (
           <div className="flex gap-3 px-6 pb-6 pt-2">

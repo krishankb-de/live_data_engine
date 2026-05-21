@@ -13,6 +13,7 @@ Visit order (stops as soon as all 4 fields populated):
   5. Classified branch
 
 On each page, layers run in cost order:
+  0. data-field HTML attributes (highest-reliability — structured source markers)
   A. JSON-LD / schema.org (free, near-zero error)
   B. Multilingual regex (DE/EN/FR) — address validates against target_city
   C. Contact-block proximity (only when A+B incomplete on this page)
@@ -67,6 +68,27 @@ def _merge(record: dict, updates: dict) -> bool:
     return changed
 
 
+def _extract_data_attrs(page) -> tuple[dict, dict]:
+    """Extract fields from data-field HTML attributes (source: data_attr).
+
+    Sites that expose structured <element data-field="phone">…</element> markers
+    are treated as highest-reliability — equivalent to JSON-LD for confidence scoring.
+    """
+    out: dict = {}
+    src: dict = {}
+    try:
+        for field in ("phone", "address", "opening_hours", "name"):
+            els = page.css(f'[data-field="{field}"]')
+            if els:
+                val = els[0].css("::text").get()
+                if val and val.strip():
+                    out[field] = val.strip()
+                    src[field] = "data_attr"
+    except Exception:
+        pass
+    return out, src
+
+
 def _extract_layers(
     page, target_city: Optional[str]
 ) -> tuple[dict, dict, dict]:
@@ -75,9 +97,14 @@ def _extract_layers(
     src: dict = {}
     pids: dict = {}  # field -> pattern_id, populated only when brain fires
 
+    # Layer 0: data-field attributes — structured HTML markers, highest reliability
+    da_vals, da_srcs = _extract_data_attrs(page)
+    out.update(da_vals)
+    src.update(da_srcs)
+
     jl = parse_jsonld(page) or {}
     for k, v in jl.items():
-        if v:
+        if v and k not in out:
             out[k] = v
             src[k] = "jsonld"
 

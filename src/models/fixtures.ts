@@ -133,6 +133,22 @@ export const listings: Listing[] = [
     changedFields: ["opening_hours"],
     emailSent: false,
   },
+  {
+    id: "9",
+    name: "Neo Tokyo GmbH i.G.",
+    category: "Technology",
+    tier: "A",
+    address: "Unter den Linden 10, 10117 Berlin",
+    phone: "+49 30 7654321",
+    email: "hello@neo-tokyo.de",
+    website: "https://neo-tokyo.de",
+    opening_hours: "Mon–Fri 09:00–18:00",
+    lastRunAt: yesterday,
+    status: "needs_review",
+    confidence: 0.72,
+    changedFields: ["phone", "opening_hours"],
+    emailSent: true,
+  },
 ];
 
 export const seedKpi: KpiData = {
@@ -214,5 +230,14 @@ export const sourceFixtures: SourceFixture[] = [
     last_modified_old: "Wed, 14 May 2026 10:00:00 GMT",
     last_modified_new: "Wed, 14 May 2026 10:00:00 GMT",
     source_html: `<p data-field="opening_hours">Mon–Sat 10:00–20:00</p>`,
+  },
+  {
+    listingId: "9",
+    sitemap_lastmod_changed: true,
+    etag_old: "nt1",
+    etag_new: "nt2",
+    last_modified_old: "Wed, 14 May 2026 10:00:00 GMT",
+    last_modified_new: "Thu, 15 May 2026 09:00:00 GMT",
+    source_html: `<span class="tel">+49 30 9999777</span><p>Öffnungszeiten: Mo–Fr 10:00–19:00</p>`,
   },
 ];
